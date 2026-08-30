@@ -1,0 +1,12 @@
+重写 README: 说明脚本行为与详细配置步骤
+
+清空原有内容, 按「功能说明 → 六步配置流程 → 通知规则 → 排查表 → 配置项清单」重新组织。
+
+补充几个容易踩的点:
+- cookie 必须与 GLADOS_DOMAIN 匹配, 现在只签一个域名
+- 创建 Telegram 机器人后需先主动对话一次, 否则推送报 403
+- 脚本恒以退出码 0 结束, Actions 绿勾不代表签到成功, 只能看日志或推送
+
+移除原有的邀请码、优惠码、fork 截图引用与旧更新日志。
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
