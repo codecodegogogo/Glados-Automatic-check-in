@@ -5,7 +5,6 @@ import logging
 from enum import Enum
 from typing import Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass, asdict, field
-from pypushdeer import PushDeer
 from logging_config import init_logger
 
 
@@ -96,7 +95,6 @@ def log_method(func):
 class Config:
     """应用配置"""
 
-    ENV_PUSH_KEY = "PUSHDEER_SENDKEY"
     ENV_COOKIES = "GLADOS_COOKIES"
     ENV_DOMAIN = "GLADOS_DOMAIN"
     ENV_VERBOSE = "GLADOS_VERBOSE"
@@ -113,7 +111,6 @@ class Config:
     DEFAULT_DOMAIN = "glados.cloud"
 
     def __init__(self):
-        self.push_key: str = ""
         self.tg_bot_token: str = ""
         self.tg_chat_id: str = ""
         self.cookies_list: List[str] = []
@@ -123,18 +120,11 @@ class Config:
 
     def _load_config(self) -> None:
         """加载配置"""
-        push_key_env: Optional[str] = os.environ.get(self.ENV_PUSH_KEY)
         raw_cookies_env: Optional[str] = os.environ.get(self.ENV_COOKIES)
         domain_env: Optional[str] = os.environ.get(self.ENV_DOMAIN)
         verbose_env: Optional[str] = os.environ.get(self.ENV_VERBOSE)
         tg_bot_token_env: Optional[str] = os.environ.get(self.ENV_TG_BOT_TOKEN)
         tg_chat_id_env: Optional[str] = os.environ.get(self.ENV_TG_CHAT_ID)
-
-        if not push_key_env:
-            logger.warning(f"{LogEmoji.WARNING} 环境变量 '{self.ENV_PUSH_KEY}' 未设置。")
-            self.push_key = ""
-        else:
-            self.push_key = push_key_env
 
         self.tg_bot_token = tg_bot_token_env.strip() if tg_bot_token_env else ""
         self.tg_chat_id = tg_chat_id_env.strip() if tg_chat_id_env else ""
@@ -163,7 +153,6 @@ class Config:
                 self.domain = self.DEFAULT_DOMAIN
 
         logger.info(f"{LogEmoji.INFO} 共加载了 {len(self.cookies_list)} 个 Cookie 用于签到。")
-        logger.info(f"{LogEmoji.INFO} 当前 {self.ENV_PUSH_KEY} {'已设置' if push_key_env else '未设置'}。")
         logger.info(f"{LogEmoji.INFO} 当前 Telegram 推送 {'已设置' if self.tg_bot_token and self.tg_chat_id else '未设置'}。")
         logger.info(f"{LogEmoji.INFO} 当前 {self.ENV_DOMAIN}: {self.domain}。")
 
@@ -399,48 +388,17 @@ class CheckinResult:
         return result_dict
 
 
-class Notifier:
-    """推送渠道基类"""
-
-    name = "推送"
-
-    def __init__(self, config: Optional[Config]):
-        self.config = config
-
-    def send(self, title: str, content: str) -> bool:
-        """发送推送; 渠道未配置或发送失败时返回 False, 不向外抛异常"""
-        raise NotImplementedError
-
-
-class PushService(Notifier):
-    """PushDeer 推送服务"""
-
-    name = "PushDeer"
-
-    def send(self, title: str, content: str) -> bool:
-        """发送推送"""
-        if not self.config or not self.config.push_key:
-            logger.info(f"{LogEmoji.WARNING} 未设置 PushDeer 密钥，跳过 {self.name} 推送。")
-            return False
-
-        try:
-            pushdeer = PushDeer(pushkey=self.config.push_key)
-            pushdeer.send_text(title, desp=content)
-            logger.info(f"{LogEmoji.SUCCESS} {LogEmoji.PUSH} {self.name} 推送发送成功。")
-            return True
-        except Exception as e:
-            logger.error(f"{LogEmoji.ERROR} {self.name} 推送发送失败: {e}")
-            return False
-
-
-class TelegramService(Notifier):
+class TelegramService:
     """Telegram Bot 推送服务"""
 
     name = "Telegram"
     API_URL = "https://api.telegram.org/bot{token}/sendMessage"
 
+    def __init__(self, config: Optional[Config]):
+        self.config = config
+
     def send(self, title: str, content: str) -> bool:
-        """发送推送"""
+        """发送推送; 未配置或发送失败时返回 False, 不向外抛异常"""
         if not self.config or not (self.config.tg_bot_token and self.config.tg_chat_id):
             logger.info(f"{LogEmoji.WARNING} 未设置 Telegram Bot Token 或 Chat ID，跳过 {self.name} 推送。")
             return False
@@ -645,11 +603,10 @@ def main():
 
     # 4. 发送推送: 有成功或失败就推一条; 全部是重复签到说明当天已推过, 不再打扰
     logger.info(f"{LogEmoji.START} 步骤 4: 发送推送")
-    notifiers: List[Notifier] = [PushService(config), TelegramService(config)]
+    notifier = TelegramService(config)
 
     if checker is None or checker.has_notable_result():
-        for notifier in notifiers:
-            notifier.send(title, content)
+        notifier.send(title, content)
     else:
         logger.info(f"{LogEmoji.INFO} 本次全部为重复签到, 当天已推送过, 跳过结果推送。")
 
@@ -657,8 +614,7 @@ def main():
     milestone = checker.format_milestone_message() if checker else None
     if milestone:
         logger.info(f"{LogEmoji.START} 步骤 5: 发送积分里程碑推送")
-        for notifier in notifiers:
-            notifier.send(*milestone)
+        notifier.send(*milestone)
 
     logger.info(f"{LogEmoji.END} 签到完成")
 

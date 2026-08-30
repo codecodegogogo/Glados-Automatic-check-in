@@ -4,14 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-GLaDOS / Railgun 机场的自动签到脚本，通过 GitHub Actions 定时运行（每天 UTC 4:00 和 10:00）。用户 fork 仓库、配置 secrets 后即可自动签到并查询剩余天数与积分，可选通过 PushDeer 推送结果。脚本只对单一域名签到，且**不做自动兑换**。
+GLaDOS / Railgun 机场的自动签到脚本，通过 GitHub Actions 定时运行（每天 UTC 4:00 和 10:00）。用户 fork 仓库、配置 secrets 后即可自动签到并查询剩余天数与积分，通过 Telegram Bot 推送结果。脚本只对单一域名签到，且**不做自动兑换**。
 
 ## 常用命令
 
 依赖未使用 requirements.txt 管理，只在 workflow 中直接安装：
 
 ```bash
-pip install requests pypushdeer
+pip install requests
 ```
 
 本地运行（PowerShell）：
@@ -20,7 +20,8 @@ pip install requests pypushdeer
 $env:GLADOS_COOKIES = "koa:sess=xxx; koa:sess.sig=yyy"
 $env:GLADOS_VERBOSE = "true"      # 可选，输出每个 API 的完整响应
 $env:GLADOS_DOMAIN = "railgun.info"     # 可选，默认 glados.cloud
-$env:PUSHDEER_SENDKEY = "xxx"     # 可选，不设置时跳过推送
+$env:TG_BOT_TOKEN = "xxx"         # 可选，与 TG_CHAT_ID 必须同时设置
+$env:TG_CHAT_ID = "xxx"
 python checkin.py
 ```
 
@@ -33,8 +34,7 @@ python checkin.py
 | `GLADOS_COOKIES` | 必需。多账号用 `&` 分隔（`c1&c2&c3`），每段是完整的 Cookie 头值 |
 | `GLADOS_DOMAIN` | 签到域名，默认 `Config.DEFAULT_DOMAIN`（`glados.cloud`）。会剥掉 `http(s)://` 前缀和首尾 `/`，剥完为空则回退默认值 |
 | `GLADOS_VERBOSE` | 接受 `true/1/yes/y` 与 `false/0/no/n`，默认 false |
-| `PUSHDEER_SENDKEY` | 不设置时 `PushService.send` 直接返回 False |
-| `TG_BOT_TOKEN` / `TG_CHAT_ID` | 必须同时设置才启用 Telegram 推送，缺一个就整个渠道跳过 |
+| `TG_BOT_TOKEN` / `TG_CHAT_ID` | 必须同时设置才启用 Telegram 推送，缺一个就整个渠道跳过。这是唯一的推送渠道 |
 
 ## 架构
 
@@ -43,7 +43,7 @@ python checkin.py
 - **Config** — 从环境变量读取配置，缺失项只 warning 不抛异常（唯一的 `ValueError` 是 `GLADOS_COOKIES` 已设置但解析后为空）。`DEFAULT_DOMAIN` 是类级常量，运行时值在 `self.domain`。
 - **API** — 无状态的单域名 HTTP 客户端，包装 4 个端点（`/api/user/status`、`/checkin`、`/points`、`/exchange`）。用作上下文管理器以关闭 `requests.Session`。`_make_request` 把所有网络异常和非 2xx 状态吞掉并返回 `None`，因此调用方永远只需判断 `None`。
 - **Checker** — 编排层。`checkin_all` 遍历 cookies，每个 cookie 在 `config.domain` 上调用一次 `_checkin_on_domain`，固定顺序执行「查状态 → 签到 → 查积分 → 判断积分里程碑」，结果存进 `CheckinResult` dataclass 列表。
-- **Notifier** — 推送基类，`PushService`（PushDeer）与 `TelegramService`（Bot sendMessage）各实现 `send(title, content) -> bool`。两者都对「未配置」和「发送失败」返回 False 而不抛异常，`config` 为 `None` 也安全，所以 `main` 里可以无条件构造并遍历。
+- **TelegramService** — 唯一的推送渠道，POST 到 Bot API 的 `sendMessage`。对「未配置」和「发送失败」都返回 False 而不抛异常，`config` 为 `None` 也安全，所以 `main` 里可以无条件构造。纯文本发送，不用 `parse_mode`，避免消息内容触发 Markdown 解析错误。
 
 `main()` 是显式的五步流程（加载配置 → 签到 → 格式化 → 推送结果 → 推送里程碑），签到部分裹在 try/except 中，任何异常都会转成推送内容而不是让进程失败。
 
@@ -61,7 +61,9 @@ python checkin.py
 
 改这块时注意它的**前提假设**：`checkin` 响应的 `points` 字段是本次获得的增量（个位数），不是总积分。所以函数里有个合理性检查 —— `earned` 必须落在 `(0, MILESTONE_STEP)` 内才做判断，否则返回空列表。这是刻意的保守设计：如果哪天接口把 `points` 改成返回总积分，`earned == points_total` 会让 `before` 变成 0，从而在总积分过百后每天误报一次；有了这个检查就变成「不报」而非「天天误报」。不要为了「让逻辑更简洁」把它删掉。
 
-**推送渠道的失败不影响彼此，也不影响退出码。** 所有 `send` 都吞掉异常返回 False，脚本始终以 0 退出。这意味着 Actions 里看到绿勾不代表推送成功了，排查推送问题必须看日志里的 `📨` 行。
+**推送失败不影响退出码。** `send` 吞掉异常返回 False，脚本始终以 0 退出。这意味着 Actions 里看到绿勾不代表推送成功了，排查推送问题必须看日志里的 `📨` 行。另外 URL 里含 bot token，任何日志都不要打印它。
+
+**「每天一条」是靠跳过重复签到实现的。** cron 一天跑两次（容错），第二次通常全是重复签到。`has_notable_result()` 在结果全为 `REPEAT` 时返回 False，`main` 据此跳过结果推送；失败仍然推送，否则 cookie 失效时会完全静默。里程碑推送不受这个开关影响（重复签到时 earned 为 0，本来也不会产生里程碑）。
 
 **日志的 verbose 双层控制。** `API._log` 和 `Checker._log` 都接受 `force` 参数：`force=True` 无论 verbose 如何都输出（用于失败、重复签到等关键信息），`force=False` 只在 verbose 时输出（成功时的完整响应）。新增日志时按这个约定选择，避免默认模式下泄露过多账号信息。
 

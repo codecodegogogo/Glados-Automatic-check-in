@@ -38,27 +38,21 @@
 
 > 不配置时使用默认域名 `glados.cloud`。请确保 `GLADOS_COOKIES` 里的 cookie 与该域名匹配，否则会签到失败。
 
-4. 手机推送（非必须）
-
-- 添加1个`repository secret`，命名为`PUSHDEER_SENDKEY`，其值对应 PushDeer key: ([获取地址](https://www.pushdeer.com/product.html))。
-
-5. Telegram 推送（非必须）
+4. Telegram 推送（非必须）
 
 - 添加2个`repository secret`，两个都设置后才会启用：
 
 | 名称 | 说明 |
 |---|---|
 | `TG_BOT_TOKEN` | 向 [@BotFather](https://t.me/BotFather) 发送 `/newbot` 创建机器人后拿到的 token，形如 `123456789:AAxxxxxxxxxxxxxxxxxx` |
-| `TG_CHAT_ID` | 你的用户 ID 或群组 ID。给 [@userinfobot](https://t.me/userinfobot) 发条消息即可拿到自己的 ID；群组 ID 以 `-` 开头 |
+| `TG_CHAT_ID` | 你的用户 ID 或群组 ID。给你的机器人发一条消息后，浏览器打开 `https://api.telegram.org/bot<TOKEN>/getUpdates`，返回 JSON 里的 `chat.id` 就是；群组 ID 以 `-` 开头 |
 
 > 创建完机器人后记得先在 Telegram 里主动给它发一条消息（群组则把它拉进群），否则机器人无权给你发消息。
 
 **推送时机**：
 
-- 每次运行都推一条签到结果（成功、重复、失败都推，这样账号失效时不会静默）
+- 签到成功或失败时推一条结果。当天第二次运行如果全是重复签到则跳过，所以正常每天只有一条
 - 总积分每跨过一个整百刻度（100、200、300……）时，**额外**再推一条里程碑通知
-
-PushDeer 和 Telegram 两个渠道互不影响，配了哪个就推哪个，都配则都推。
 
 ### **star**自己的仓库
 
@@ -78,7 +72,7 @@ PushDeer 和 Telegram 两个渠道互不影响，配了哪个就推哪个，都�
 
 - **2026-01**: 重构代码，添加log输出方便定位，支持新版网址，支持配置积分兑换策略。
 - **2026-04**: 优化代码逻辑，优化日志输出，支持[新版域名](https://railgun.info) ，在 GLADOS_COOKIES 中添加新版域名下的 cookies 即可使用。
-- **2026-08**: 改为只对单一域名签到（默认 `glados.cloud`，可用 `GLADOS_DOMAIN` 覆盖），不再逐个域名尝试；移除自动兑换积分，兑换时机自行在网页端决定；新增 Telegram 推送，总积分每跨过一个整百刻度额外推送一次。
+- **2026-08**: 改为只对单一域名签到（默认 `glados.cloud`，可用 `GLADOS_DOMAIN` 覆盖），不再逐个域名尝试；移除自动兑换积分，兑换时机自行在网页端决定；推送改为 Telegram（移除 PushDeer），总积分每跨过一个整百刻度额外推送一次。
 
 
 ## 问题排查与定位
