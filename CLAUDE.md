@@ -34,6 +34,7 @@ python checkin.py
 | `GLADOS_DOMAIN` | 签到域名，默认 `Config.DEFAULT_DOMAIN`（`glados.cloud`）。会剥掉 `http(s)://` 前缀和首尾 `/`，剥完为空则回退默认值 |
 | `GLADOS_VERBOSE` | 接受 `true/1/yes/y` 与 `false/0/no/n`，默认 false |
 | `PUSHDEER_SENDKEY` | 不设置时 `PushService.send` 直接返回 False |
+| `TG_BOT_TOKEN` / `TG_CHAT_ID` | 必须同时设置才启用 Telegram 推送，缺一个就整个渠道跳过 |
 
 ## 架构
 
@@ -41,10 +42,10 @@ python checkin.py
 
 - **Config** — 从环境变量读取配置，缺失项只 warning 不抛异常（唯一的 `ValueError` 是 `GLADOS_COOKIES` 已设置但解析后为空）。`DEFAULT_DOMAIN` 是类级常量，运行时值在 `self.domain`。
 - **API** — 无状态的单域名 HTTP 客户端，包装 4 个端点（`/api/user/status`、`/checkin`、`/points`、`/exchange`）。用作上下文管理器以关闭 `requests.Session`。`_make_request` 把所有网络异常和非 2xx 状态吞掉并返回 `None`，因此调用方永远只需判断 `None`。
-- **Checker** — 编排层。`checkin_all` 遍历 cookies，每个 cookie 在 `config.domain` 上调用一次 `_checkin_on_domain`，固定顺序执行「查状态 → 签到 → 查积分」，结果存进 `CheckinResult` dataclass 列表。
-- **PushService** — PushDeer 推送，标题/正文由 `Checker.format_results` 生成。
+- **Checker** — 编排层。`checkin_all` 遍历 cookies，每个 cookie 在 `config.domain` 上调用一次 `_checkin_on_domain`，固定顺序执行「查状态 → 签到 → 查积分 → 判断积分里程碑」，结果存进 `CheckinResult` dataclass 列表。
+- **Notifier** — 推送基类，`PushService`（PushDeer）与 `TelegramService`（Bot sendMessage）各实现 `send(title, content) -> bool`。两者都对「未配置」和「发送失败」返回 False 而不抛异常，`config` 为 `None` 也安全，所以 `main` 里可以无条件构造并遍历。
 
-`main()` 是显式的四步流程（加载配置 → 签到 → 格式化 → 推送），整体裹在 try/except 中，任何异常都会转成推送内容而不是让进程失败。
+`main()` 是显式的五步流程（加载配置 → 签到 → 格式化 → 推送结果 → 推送里程碑），签到部分裹在 try/except 中，任何异常都会转成推送内容而不是让进程失败。
 
 ## 修改代码时需要知道的约定
 
@@ -56,7 +57,11 @@ python checkin.py
 
 **签到请求的 `token` 参数就是域名本身**（`_get_checkin_data` 返回 `{"token": self.domain}`），不是账号 token。
 
-**兑换端点的参数约定。** `exchange` 只发 `{"planType": plan}`，积分是否足够完全由服务端判断并在 `message` 中返回；调用方需要自己先用 `get_points` 判断，脚本内没有任何本地积分门槛的实现。
+**积分里程碑靠增量反推，不存状态。** `_detect_milestones` 用「签到后的总积分」减「本次签到获得的积分」得到签到前的值，再比较两者的 `// 100` 商是否变化。GitHub Actions 每次运行都是干净环境，这样就不必用 cache/artifact/提交文件去记住上一次的积分，同一个刻度也不会被反复通知。
+
+改这块时注意它的**前提假设**：`checkin` 响应的 `points` 字段是本次获得的增量（个位数），不是总积分。所以函数里有个合理性检查 —— `earned` 必须落在 `(0, MILESTONE_STEP)` 内才做判断，否则返回空列表。这是刻意的保守设计：如果哪天接口把 `points` 改成返回总积分，`earned == points_total` 会让 `before` 变成 0，从而在总积分过百后每天误报一次；有了这个检查就变成「不报」而非「天天误报」。不要为了「让逻辑更简洁」把它删掉。
+
+**推送渠道的失败不影响彼此，也不影响退出码。** 所有 `send` 都吞掉异常返回 False，脚本始终以 0 退出。这意味着 Actions 里看到绿勾不代表推送成功了，排查推送问题必须看日志里的 `📨` 行。
 
 **日志的 verbose 双层控制。** `API._log` 和 `Checker._log` 都接受 `force` 参数：`force=True` 无论 verbose 如何都输出（用于失败、重复签到等关键信息），`force=False` 只在 verbose 时输出（成功时的完整响应）。新增日志时按这个约定选择，避免默认模式下泄露过多账号信息。
 
