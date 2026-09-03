@@ -71,7 +71,7 @@ koa:sess=eyJ1c2xxxxxxxxxxxxxxxxxxxxxxxxxxxx=; koa:sess.sig=xJkOxxxxxxxxxtnM;
    ```
    https://api.telegram.org/bot<TOKEN>/getUpdates
    ```
-
+   此时你会看到回复了一个空数组，给你的机器人发一条消息后，刷新本页
    在返回的 JSON 里找 `"chat":{"id":123456789,` —— 那个数字就是 **`TG_CHAT_ID`**
 
 6. 顺手验证一下这两个值配不配（同样替换 `<TOKEN>` 和 `<CHAT_ID>`）：
